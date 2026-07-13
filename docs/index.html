@@ -497,27 +497,7 @@ function render() {
   document.getElementById('hdrName').textContent = u.name;
   document.getElementById('hdrRole').textContent = u.title;
 
-  // User select grouped by department
-  var sel = document.getElementById('userSelect');
-  var deptGroups = {};
-  var deptOrder = ['Executive','Operations','Warehouse','Purchasing','Assembly','Service',
-                   'CNC Production','CNC - Mills','CNC - Lathes',
-                   'Engineering','Sales','Finance','Marketing','Human Resources'];
-  EMP.forEach(function(e) {
-    if (!deptGroups[e.dept]) deptGroups[e.dept] = [];
-    deptGroups[e.dept].push(e);
-  });
-  var optHtml = '';
-  deptOrder.forEach(function(dept) {
-    var group = deptGroups[dept];
-    if (!group || group.length === 0) return;
-    optHtml += '<optgroup label="' + esc(dept) + '">';
-    group.forEach(function(e) {
-      optHtml += '<option value="' + e.id + '"' + (e.id === S.uid ? ' selected' : '') + '>' + esc(e.name) + '</option>';
-    });
-    optHtml += '</optgroup>';
-  });
-  sel.innerHTML = optHtml;
+  // (User select removed - login screen handles user selection now)
 
   // Tabs
   var tabs = [
