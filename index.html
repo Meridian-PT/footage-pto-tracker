@@ -510,6 +510,9 @@ function render() {
     tabs.push({id:'team', label:'Team'});
     tabs.push({id:'approvals', label:'Approvals', badge: pCount > 0 ? pCount : 0});
   }
+  if (isAdmin(u)) {
+    tabs.push({id:'manage', label:'Manage Employees'});
+  }
   tabs.push({id:'settings', label:'Settings'});
   var tabHtml = '';
   tabs.forEach(function(t) {
@@ -527,6 +530,7 @@ function render() {
     case 'calendar':   html = viewCalendar(); break;
     case 'team':       html = viewTeam(); break;
     case 'approvals':  html = viewApprovals(); break;
+    case 'manage':     html = viewManage(); break;
     case 'settings':   html = viewSettings(); break;
     default:           html = viewDashboard();
   }
@@ -893,6 +897,191 @@ function denyReq(id) {
   render();
 }
 
+// ─── MANAGE EMPLOYEES (Admin only) ───────────────────────
+function viewManage() {
+  if (!isAdmin(curUser())) return '<div class="empty-state">Admin access only.</div>';
+
+  var activeEmps = EMP.filter(function(e){ return e.status !== 'inactive'; });
+  var inactiveEmps = EMP.filter(function(e){ return e.status === 'inactive'; });
+
+  var rows = activeEmps.map(function(e) {
+    return '<tr>' +
+      '<td><strong>' + esc(e.name) + '</strong></td>' +
+      '<td>' + esc(e.title) + '</td>' +
+      '<td><span class="chip chip-blue">' + esc(e.dept) + '</span></td>' +
+      '<td><span class="chip chip-' + (e.role === 'admin' ? 'red' : e.role === 'manager' ? 'orange' : 'gray') + '">' + e.role + '</span></td>' +
+      '<td>V:' + e.bal.vacation.total + ' S:' + e.bal.sick.total + '</td>' +
+      '<td><code>' + e.pin + '</code></td>' +
+      '<td>' +
+        '<button class="btn btn-outline btn-sm" onclick="editEmployee(' + e.id + ')" style="margin-right:4px;">Edit</button>' +
+        '<button class="btn btn-sm" style="background:var(--ft-red);color:#fff;" onclick="deactivateEmployee(' + e.id + ')">Deactivate</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+
+  var inactiveRows = '';
+  if (inactiveEmps.length > 0) {
+    inactiveRows = '<div class="card" style="margin-top:14px;"><div class="card-title">Inactive Employees (' + inactiveEmps.length + ')</div>' +
+      '<div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Title</th><th>Department</th><th>Action</th></tr></thead><tbody>' +
+      inactiveEmps.map(function(e) {
+        return '<tr style="opacity:0.6;"><td>' + esc(e.name) + '</td><td>' + esc(e.title) + '</td><td>' + esc(e.dept) + '</td>' +
+          '<td><button class="btn btn-outline btn-sm" onclick="reactivateEmployee(' + e.id + ')">Reactivate</button></td></tr>';
+      }).join('') +
+      '</tbody></table></div></div>';
+  }
+
+  // Add employee form
+  var depts = departments();
+  var deptOpts = depts.map(function(d){ return '<option value="' + esc(d) + '">' + esc(d) + '</option>'; }).join('');
+  var mgrOpts = '<option value="">None</option>' + EMP.filter(function(e){ return e.role === 'manager' || e.role === 'admin'; }).map(function(e){
+    return '<option value="' + e.id + '">' + esc(e.name) + ' (' + esc(e.dept) + ')</option>';
+  }).join('');
+
+  var addForm = '<div class="card"><div class="card-title">Add New Employee</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">Full Name</label><input class="form-input" id="addName" placeholder="First Last"></div>' +
+      '<div class="form-group"><label class="form-label">Title</label><input class="form-input" id="addTitle" placeholder="Job title"></div>' +
+      '<div class="form-group"><label class="form-label">Department</label><select class="form-select" id="addDept">' + deptOpts + '</select></div>' +
+      '<div class="form-group"><label class="form-label">Role</label><select class="form-select" id="addRole"><option value="employee">Employee</option><option value="manager">Manager</option><option value="admin">Admin</option></select></div>' +
+      '<div class="form-group"><label class="form-label">Reports To (for manager access)</label><select class="form-select" id="addMgr">' + mgrOpts + '</select></div>' +
+      '<div class="form-group"><label class="form-label">Vacation Days/Year</label><input class="form-input" id="addVac" type="number" value="10"></div>' +
+      '<div class="form-group"><label class="form-label">Sick Days/Year</label><input class="form-input" id="addSick" type="number" value="5"></div>' +
+    '</div>' +
+    '<button class="btn btn-primary" onclick="addEmployee()">Add Employee</button>' +
+  '</div>';
+
+  // Edit modal placeholder
+  var editModal = '<div id="editModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:200;display:none;align-items:center;justify-content:center;">' +
+    '<div class="card" style="max-width:500px;width:90%;max-height:90vh;overflow-y:auto;" id="editModalContent"></div></div>';
+
+  return addForm +
+    '<div class="card"><div class="card-title">Active Employees (' + activeEmps.length + ')</div>' +
+      '<div class="table-wrap"><table class="table"><thead><tr>' +
+        '<th>Name</th><th>Title</th><th>Department</th><th>Role</th><th>PTO Allotment</th><th>PIN</th><th>Actions</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
+    inactiveRows + editModal;
+}
+
+function addEmployee() {
+  var name = document.getElementById('addName').value.trim();
+  var title = document.getElementById('addTitle').value.trim();
+  var dept = document.getElementById('addDept').value;
+  var role = document.getElementById('addRole').value;
+  var mgrId = parseInt(document.getElementById('addMgr').value) || 0;
+  var vac = parseInt(document.getElementById('addVac').value) || 10;
+  var sick = parseInt(document.getElementById('addSick').value) || 5;
+
+  if (!name) { toast('Please enter employee name.'); return; }
+  if (!title) { toast('Please enter job title.'); return; }
+
+  var newId = 1;
+  EMP.forEach(function(e){ if (e.id >= newId) newId = e.id + 1; });
+
+  var pin = String(1000 + Math.floor(Math.random() * 9000));
+
+  var newEmp = {
+    id: newId,
+    name: name,
+    title: title,
+    dept: dept,
+    role: role,
+    manages: [],
+    bal: { vacation: { total: vac, used: 0, pending: 0 }, sick: { total: sick, used: 0, pending: 0 }, personal: { total: 0, used: 0, pending: 0 } },
+    pin: pin
+  };
+
+  EMP.push(newEmp);
+
+  // If a manager was selected, add this employee to their manages list
+  if (mgrId > 0) {
+    var mgr = empById(mgrId);
+    if (mgr && mgr.manages.indexOf(newId) === -1) {
+      mgr.manages.push(newId);
+    }
+  }
+
+  saveEmployees();
+  savePins();
+  populateLoginSelect();
+  toast(name + ' added. PIN: ' + pin);
+  render();
+}
+
+function deactivateEmployee(id) {
+  var emp = empById(id);
+  if (!emp) return;
+  if (emp.role === 'admin') { toast('Cannot deactivate an admin.'); return; }
+  emp.status = 'inactive';
+  saveEmployees();
+  toast(emp.name + ' deactivated. PTO history preserved.');
+  render();
+}
+
+function reactivateEmployee(id) {
+  var emp = empById(id);
+  if (!emp) return;
+  delete emp.status;
+  saveEmployees();
+  toast(emp.name + ' reactivated.');
+  render();
+}
+
+function editEmployee(id) {
+  var emp = empById(id);
+  if (!emp) return;
+
+  var depts = departments();
+  var deptOpts = depts.map(function(d){ return '<option value="' + esc(d) + '"' + (d === emp.dept ? ' selected' : '') + '>' + esc(d) + '</option>'; }).join('');
+
+  var modal = document.getElementById('editModal');
+  var content = document.getElementById('editModalContent');
+  content.innerHTML = '<div class="card-title">Edit: ' + esc(emp.name) + '</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">Full Name</label><input class="form-input" id="editName" value="' + esc(emp.name) + '"></div>' +
+      '<div class="form-group"><label class="form-label">Title</label><input class="form-input" id="editTitle" value="' + esc(emp.title) + '"></div>' +
+      '<div class="form-group"><label class="form-label">Department</label><select class="form-select" id="editDept">' + deptOpts + '</select></div>' +
+      '<div class="form-group"><label class="form-label">Role</label><select class="form-select" id="editRole"><option value="employee"' + (emp.role==='employee'?' selected':'') + '>Employee</option><option value="manager"' + (emp.role==='manager'?' selected':'') + '>Manager</option><option value="admin"' + (emp.role==='admin'?' selected':'') + '>Admin</option></select></div>' +
+      '<div class="form-group"><label class="form-label">Vacation Days Total</label><input class="form-input" id="editVac" type="number" value="' + emp.bal.vacation.total + '"></div>' +
+      '<div class="form-group"><label class="form-label">Sick Days Total</label><input class="form-input" id="editSick" type="number" value="' + emp.bal.sick.total + '"></div>' +
+      '<div class="form-group"><label class="form-label">Reset PIN</label><input class="form-input" id="editPin" value="' + emp.pin + '" maxlength="4"></div>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:12px;">' +
+      '<button class="btn btn-primary" onclick="saveEdit(' + id + ')">Save Changes</button>' +
+      '<button class="btn btn-outline" onclick="closeEditModal()">Cancel</button>' +
+    '</div>';
+  modal.style.display = 'flex';
+}
+
+function saveEdit(id) {
+  var emp = empById(id);
+  if (!emp) return;
+
+  emp.name = document.getElementById('editName').value.trim() || emp.name;
+  emp.title = document.getElementById('editTitle').value.trim() || emp.title;
+  emp.dept = document.getElementById('editDept').value;
+  emp.role = document.getElementById('editRole').value;
+  emp.bal.vacation.total = parseInt(document.getElementById('editVac').value) || emp.bal.vacation.total;
+  emp.bal.sick.total = parseInt(document.getElementById('editSick').value) || emp.bal.sick.total;
+
+  var newPin = document.getElementById('editPin').value;
+  if (newPin && /^\d{4}$/.test(newPin)) emp.pin = newPin;
+
+  saveEmployees();
+  savePins();
+  populateLoginSelect();
+  closeEditModal();
+  toast(emp.name + ' updated.');
+  render();
+}
+
+function closeEditModal() {
+  document.getElementById('editModal').style.display = 'none';
+}
+
+function saveEmployees() {
+  try { localStorage.setItem('ft_employees', JSON.stringify(EMP)); } catch(e) {}
+}
+
 // ─── SETTINGS ────────────────────────────────────────────
 function viewSettings() {
   var u = curUser();
@@ -940,6 +1129,18 @@ function changePin() {
   document.getElementById('newPin').value = '';
   document.getElementById('confirmPin').value = '';
 }
+
+// ─── LOAD SAVED DATA ─────────────────────────────────────
+(function() {
+  try {
+    var saved = JSON.parse(localStorage.getItem('ft_employees'));
+    if (saved && saved.length > 0) {
+      // Merge: use saved data but keep functions working
+      EMP.length = 0;
+      saved.forEach(function(e) { EMP.push(e); });
+    }
+  } catch(e) {}
+})();
 
 // ─── INIT ─────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
