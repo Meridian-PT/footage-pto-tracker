@@ -49,7 +49,7 @@
     .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 10px; }
 
     /* Stats grid */
-    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
     .stat { background: var(--ft-card); border: 1px solid var(--ft-border); border-radius: 10px; padding: 16px; text-align: center; }
     .stat-value { font-size: 1.7rem; font-weight: 700; }
     .stat-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ft-muted); margin-top: 3px; }
@@ -284,7 +284,7 @@ var EMP = [
     e.bal = {
       vacation:  { total: vTotal, used: vUsed, pending: 0 },
       sick:      { total: 5,      used: sUsed, pending: 0 },
-      personal:  { total: 3,      used: pUsed, pending: 0 }
+      personal:  { total: 0,      used: 0, pending: 0 }
     };
     // Auto-generate 4-digit PIN (1000-9999)
     e.pin = String(1000 + (rng(8999)));
@@ -316,14 +316,14 @@ function savePins() {
 var REQ = [
   {id:1,  empId:11, type:'vacation',  start:'2026-07-21', end:'2026-07-25', days:5, reason:'Family vacation',           status:'pending',  submitted:'2026-07-08'},
   {id:2,  empId:29, type:'vacation',  start:'2026-07-28', end:'2026-08-01', days:5, reason:'Summer trip',               status:'pending',  submitted:'2026-07-09'},
-  {id:3,  empId:35, type:'personal',  start:'2026-07-17', end:'2026-07-17', days:1, reason:'Doctor appointment',        status:'pending',  submitted:'2026-07-10'},
+  {id:3,  empId:35, type:'sick',      start:'2026-07-17', end:'2026-07-17', days:1, reason:'Doctor appointment',        status:'pending',  submitted:'2026-07-10'},
   {id:4,  empId:17, type:'vacation',  start:'2026-07-14', end:'2026-07-18', days:5, reason:'Visiting family overseas',  status:'pending',  submitted:'2026-07-11'},
   {id:5,  empId:2,  type:'vacation',  start:'2026-08-04', end:'2026-08-08', days:5, reason:'Beach holiday',             status:'approved', submitted:'2026-06-28'},
   {id:6,  empId:37, type:'sick',      start:'2026-07-10', end:'2026-07-11', days:2, reason:'',                          status:'approved', submitted:'2026-07-10'},
   {id:7,  empId:6,  type:'vacation',  start:'2026-07-14', end:'2026-07-15', days:2, reason:'Personal errands',          status:'approved', submitted:'2026-07-01'},
   {id:8,  empId:23, type:'sick',      start:'2026-07-13', end:'2026-07-13', days:1, reason:'Not feeling well',          status:'approved', submitted:'2026-07-13'},
   {id:9,  empId:30, type:'vacation',  start:'2026-07-07', end:'2026-07-08', days:2, reason:'Moving',                    status:'approved', submitted:'2026-06-30'},
-  {id:10, empId:40, type:'personal',  start:'2026-07-09', end:'2026-07-09', days:1, reason:'Banking appointment',       status:'denied',   submitted:'2026-07-07'}
+  {id:10, empId:40, type:'sick',      start:'2026-07-09', end:'2026-07-09', days:1, reason:'Banking appointment',       status:'denied',   submitted:'2026-07-07'}
 ];
 
 // Sync pending into balances
@@ -537,9 +537,9 @@ function render() {
 function viewDashboard() {
   var u = curUser();
   var b = u.bal;
-  var types = ['vacation','sick','personal'];
-  var labels = {vacation:'Vacation', sick:'Sick Days', personal:'Personal Days'};
-  var colors = {vacation:'var(--ft-blue)', sick:'var(--ft-orange)', personal:'var(--ft-green)'};
+  var types = ['vacation','sick'];
+  var labels = {vacation:'Vacation', sick:'Sick Days'};
+  var colors = {vacation:'var(--ft-blue)', sick:'var(--ft-orange)'};
 
   var statsHtml = '';
   types.forEach(function(type) {
@@ -603,20 +603,16 @@ function viewRequest() {
   var b = u.bal;
   var vRem = b.vacation.total - b.vacation.used - b.vacation.pending;
   var sRem = b.sick.total - b.sick.used - b.sick.pending;
-  var pRem = b.personal.total - b.personal.used - b.personal.pending;
-
   return '<div class="card"><div class="card-title">Request Time Off</div>' +
     '<div style="margin-bottom:14px;font-size:0.82rem;color:var(--ft-muted);">' +
       'Available: <strong style="color:var(--ft-blue)">' + vRem + '</strong> vacation &middot; ' +
-      '<strong style="color:var(--ft-orange)">' + sRem + '</strong> sick &middot; ' +
-      '<strong style="color:var(--ft-green)">' + pRem + '</strong> personal' +
+      '<strong style="color:var(--ft-orange)">' + sRem + '</strong> sick' +
     '</div>' +
     '<div class="form-grid">' +
       '<div class="form-group"><label class="form-label">Leave Type</label>' +
         '<select class="form-select" id="reqType">' +
           '<option value="vacation">Vacation (' + vRem + ' remaining)</option>' +
           '<option value="sick">Sick Day (' + sRem + ' remaining)</option>' +
-          '<option value="personal">Personal Day (' + pRem + ' remaining)</option>' +
         '</select></div>' +
       '<div class="form-group"><label class="form-label">Start Date</label><input type="date" class="form-input" id="reqStart"></div>' +
       '<div class="form-group"><label class="form-label">End Date</label><input type="date" class="form-input" id="reqEnd"></div>' +
@@ -769,8 +765,7 @@ function viewTeam() {
     var b = e.bal;
     var vRem = b.vacation.total - b.vacation.used - b.vacation.pending;
     var sRem = b.sick.total - b.sick.used - b.sick.pending;
-    var pRem = b.personal.total - b.personal.used - b.personal.pending;
-    var totalRem = vRem + sRem + pRem;
+    var totalRem = vRem + sRem;
     var pendReqs = REQ.filter(function(r){ return r.empId === e.id && r.status === 'pending'; }).length;
 
     rows += '<tr>' +
@@ -778,7 +773,6 @@ function viewTeam() {
       '<td><span class="chip chip-blue">' + esc(e.dept) + '</span></td>' +
       '<td>' + b.vacation.used + '/' + b.vacation.total + (b.vacation.pending > 0 ? ' <span style="color:var(--ft-orange);font-size:0.7rem;">(' + b.vacation.pending + 'p)</span>' : '') + '</td>' +
       '<td>' + b.sick.used + '/' + b.sick.total + '</td>' +
-      '<td>' + b.personal.used + '/' + b.personal.total + (b.personal.pending > 0 ? ' <span style="color:var(--ft-orange);font-size:0.7rem;">(' + b.personal.pending + 'p)</span>' : '') + '</td>' +
       '<td><strong>' + totalRem + '</strong></td>' +
       '<td>' + (pendReqs > 0 ? '<span class="chip chip-orange">' + pendReqs + ' pending</span>' : '<span style="color:var(--ft-muted);">0</span>') + '</td>' +
     '</tr>';
@@ -792,7 +786,7 @@ function viewTeam() {
   return filterHtml +
     '<div class="card"><div class="card-title">Team Balances (' + filtered.length + ' employees)</div>' +
       '<div class="table-wrap"><table class="table"><thead><tr>' +
-        '<th>Employee</th><th>Department</th><th>Vacation</th><th>Sick</th><th>Personal</th><th>Total Left</th><th>Pending</th>' +
+        '<th>Employee</th><th>Department</th><th>Vacation</th><th>Sick</th><th>Total Left</th><th>Pending</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
     '<div class="stats">' +
       '<div class="stat"><div class="stat-value" style="color:var(--ft-blue)">' + totalEmp + '</div><div class="stat-label">Team Members</div></div>' +
