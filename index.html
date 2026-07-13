@@ -153,25 +153,60 @@
     @media (min-width: 769px) and (max-width: 1024px) {
       .stats { grid-template-columns: repeat(3, 1fr); }
     }
+    /* Login screen */
+    .login-overlay { min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--ft-primary); padding:20px; }
+    .login-box { background:var(--ft-card); border-radius:12px; padding:32px; max-width:380px; width:100%; text-align:center; }
+    .login-box h1 { font-size:1.3rem; margin-bottom:4px; }
+    .login-box h1 span { color:var(--ft-accent); }
+    .login-box .sub { font-size:0.82rem; color:var(--ft-muted); margin-bottom:24px; }
+    .login-box .form-group { text-align:left; margin-bottom:14px; }
+    .login-box .login-btn { width:100%; padding:12px; font-size:0.9rem; }
+    .login-error { color:var(--ft-red); font-size:0.8rem; margin-top:8px; min-height:20px; }
+    .pin-dots { display:flex; gap:10px; justify-content:center; margin:12px 0; }
+    .pin-dot { width:48px; height:48px; border:2px solid var(--ft-border); border-radius:8px; text-align:center; font-size:1.3rem; font-weight:700; font-family:inherit; letter-spacing:4px; }
+    .pin-dot:focus { border-color:var(--ft-accent); outline:none; }
+
+    /* Settings tab */
+    .pin-change-box { max-width:300px; }
   </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="header-logo">Footage <span>Tools</span> | Time Off Tracker</div>
-  <div class="header-right">
-    <select id="userSelect" class="header-select" onchange="switchUser(+this.value)"></select>
-    <div class="header-avatar" id="avatar">MS</div>
-    <div class="header-info">
-      <div class="header-name" id="hdrName">Matt Stone</div>
-      <div class="header-role" id="hdrRole">President &amp; CEO</div>
+<!-- LOGIN SCREEN -->
+<div id="loginScreen" class="login-overlay">
+  <div class="login-box">
+    <h1>Footage <span>Tools</span></h1>
+    <div class="sub">Time Off Tracker</div>
+    <div class="form-group">
+      <label class="form-label">Your Name</label>
+      <select class="form-select" id="loginName" onchange="document.getElementById('loginPin').focus()"></select>
     </div>
+    <div class="form-group">
+      <label class="form-label">PIN</label>
+      <input type="password" class="form-input" id="loginPin" maxlength="4" placeholder="4-digit PIN" inputmode="numeric" pattern="[0-9]*" style="text-align:center;font-size:1.2rem;letter-spacing:8px;" onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <button class="btn btn-primary login-btn" onclick="doLogin()">Sign In</button>
+    <div class="login-error" id="loginError"></div>
   </div>
 </div>
 
-<div class="container">
-  <div class="tabs" id="tabBar"></div>
-  <div id="app"></div>
+<!-- APP (hidden until login) -->
+<div id="appWrap" style="display:none;">
+  <div class="header">
+    <div class="header-logo">Footage <span>Tools</span> | Time Off Tracker</div>
+    <div class="header-right">
+      <div class="header-avatar" id="avatar">MS</div>
+      <div class="header-info">
+        <div class="header-name" id="hdrName"></div>
+        <div class="header-role" id="hdrRole"></div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="logout()" style="color:#fff;border-color:rgba(255,255,255,0.3);">Sign Out</button>
+    </div>
+  </div>
+  <div class="container">
+    <div class="tabs" id="tabBar"></div>
+    <div id="app"></div>
+  </div>
 </div>
 
 <script>
@@ -236,7 +271,7 @@ var EMP = [
   {id:42, name:'Mike Daser',           title:'HR Manager',                 dept:'Human Resources', role:'admin',   manages:[]}
 ];
 
-// Assign PTO balances deterministically but varied
+// Assign PTO balances + auto-generate PINs
 (function() {
   var seed = 7;
   function rng(max) { seed = (seed * 16807 + 11) % 2147483647; return seed % (max + 1); }
@@ -251,8 +286,31 @@ var EMP = [
       sick:      { total: 5,      used: sUsed, pending: 0 },
       personal:  { total: 3,      used: pUsed, pending: 0 }
     };
+    // Auto-generate 4-digit PIN (1000-9999)
+    e.pin = String(1000 + (rng(8999)));
   });
+  // Override admin PINs to known values for easy demo
+  empById(1).pin = '1234';   // Matt
+  empById(2).pin = '2345';   // Anna
+  empById(42).pin = '4321';  // Mike Daser
 })();
+
+// Persist PIN changes in localStorage
+(function() {
+  try {
+    var saved = JSON.parse(localStorage.getItem('ft_pins') || '{}');
+    Object.keys(saved).forEach(function(id) {
+      var emp = empById(parseInt(id));
+      if (emp) emp.pin = saved[id];
+    });
+  } catch(e) {}
+})();
+
+function savePins() {
+  var pins = {};
+  EMP.forEach(function(e) { pins[e.id] = e.pin; });
+  try { localStorage.setItem('ft_pins', JSON.stringify(pins)); } catch(e) {}
+}
 
 // Demo requests (8-10, spread across departments)
 var REQ = [
@@ -280,12 +338,60 @@ var nextReqId = REQ.length + 1;
 
 // ─── STATE ────────────────────────────────────────────────
 var S = {
-  uid: 1,
+  uid: null,  // null until login
   tab: 'dashboard',
   calMonth: 6,    // July (0-indexed)
   calYear: 2026,
   deptFilter: 'all'
 };
+
+// ─── LOGIN / LOGOUT ──────────────────────────────────────
+function populateLoginSelect() {
+  var sel = document.getElementById('loginName');
+  var deptOrder = ['Executive','Operations','Warehouse','Purchasing','Assembly','Service',
+                   'CNC Production','CNC - Mills','CNC - Lathes',
+                   'Engineering','Sales','Finance','Marketing','Human Resources'];
+  var deptGroups = {};
+  EMP.forEach(function(e) {
+    if (!deptGroups[e.dept]) deptGroups[e.dept] = [];
+    deptGroups[e.dept].push(e);
+  });
+  var html = '';
+  deptOrder.forEach(function(dept) {
+    var group = deptGroups[dept];
+    if (!group || group.length === 0) return;
+    html += '<optgroup label="' + esc(dept) + '">';
+    group.forEach(function(e) { html += '<option value="' + e.id + '">' + esc(e.name) + '</option>'; });
+    html += '</optgroup>';
+  });
+  sel.innerHTML = html;
+}
+
+function doLogin() {
+  var empId = parseInt(document.getElementById('loginName').value);
+  var pin = document.getElementById('loginPin').value;
+  var errEl = document.getElementById('loginError');
+  var emp = empById(empId);
+
+  if (!emp) { errEl.textContent = 'Please select your name.'; return; }
+  if (pin !== emp.pin) { errEl.textContent = 'Incorrect PIN. Please try again.'; document.getElementById('loginPin').value = ''; return; }
+
+  S.uid = empId;
+  S.tab = 'dashboard';
+  errEl.textContent = '';
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appWrap').style.display = 'block';
+  render();
+}
+
+function logout() {
+  S.uid = null;
+  S.tab = 'dashboard';
+  document.getElementById('appWrap').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginPin').value = '';
+  document.getElementById('loginError').textContent = '';
+}
 
 // ─── HELPERS ──────────────────────────────────────────────
 function empById(id)  { for (var i=0;i<EMP.length;i++) if (EMP[i].id===id) return EMP[i]; return null; }
@@ -424,6 +530,7 @@ function render() {
     tabs.push({id:'team', label:'Team'});
     tabs.push({id:'approvals', label:'Approvals', badge: pCount > 0 ? pCount : 0});
   }
+  tabs.push({id:'settings', label:'Settings'});
   var tabHtml = '';
   tabs.forEach(function(t) {
     tabHtml += '<button class="tab' + (S.tab === t.id ? ' active' : '') + '" onclick="switchTab(\'' + t.id + '\')">' + t.label;
@@ -440,6 +547,7 @@ function render() {
     case 'calendar':   html = viewCalendar(); break;
     case 'team':       html = viewTeam(); break;
     case 'approvals':  html = viewApprovals(); break;
+    case 'settings':   html = viewSettings(); break;
     default:           html = viewDashboard();
   }
   document.getElementById('app').innerHTML = html;
@@ -586,10 +694,16 @@ function viewCalendar() {
   var firstDow = new Date(y, m, 1).getDay();
   var daysInMonth = new Date(y, m + 1, 0).getDate();
 
-  // Determine which employees to show based on user role
-  var vis = visibleEmployees();
+  // Calendar visibility: admins see everyone, others see their department
+  var u = curUser();
+  var calEmps;
+  if (isAdmin(u)) {
+    calEmps = EMP.slice();
+  } else {
+    calEmps = EMP.filter(function(e){ return e.dept === u.dept; });
+  }
   var visIds = {};
-  vis.forEach(function(e){ visIds[e.id] = true; });
+  calEmps.forEach(function(e){ visIds[e.id] = true; });
 
   // Build off-days map
   var offMap = {};
@@ -633,8 +747,8 @@ function viewCalendar() {
     '</div>' +
     '<div class="cal-grid">' + cells + '</div>' +
     '<div style="font-size:0.72rem;color:var(--ft-muted);margin-top:8px;">' +
-      'Orange cells = approved time off. Hover or tap for names.' +
-      (isManager(curUser()) ? '' : ' Showing your approved time off.') +
+      'Orange cells = approved time off. Hover or tap for names. ' +
+      (isAdmin(curUser()) ? 'Showing all departments.' : 'Showing ' + curUser().dept + ' department.') +
     '</div>' +
   '</div>';
 }
@@ -805,9 +919,57 @@ function denyReq(id) {
   render();
 }
 
+// ─── SETTINGS ────────────────────────────────────────────
+function viewSettings() {
+  var u = curUser();
+  return '<div class="card"><div class="card-title">Change Your PIN</div>' +
+    '<div class="pin-change-box">' +
+      '<div class="form-group">' +
+        '<label class="form-label">Current PIN</label>' +
+        '<input type="password" class="form-input" id="curPin" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="Enter current PIN">' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label class="form-label">New PIN (4 digits)</label>' +
+        '<input type="password" class="form-input" id="newPin" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="4 digits">' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label class="form-label">Confirm New PIN</label>' +
+        '<input type="password" class="form-input" id="confirmPin" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="4 digits" onkeydown="if(event.key===\'Enter\')changePin()">' +
+      '</div>' +
+      '<button class="btn btn-primary" onclick="changePin()">Update PIN</button>' +
+    '</div>' +
+  '</div>' +
+  (isAdmin(u) ? '<div class="card"><div class="card-title">All Employee PINs (Admin Only)</div>' +
+    '<div style="font-size:0.8rem;color:var(--ft-muted);margin-bottom:12px;">Use this to help employees who forgot their PIN.</div>' +
+    '<div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Department</th><th>PIN</th></tr></thead><tbody>' +
+    EMP.map(function(e) {
+      return '<tr><td>' + esc(e.name) + '</td><td><span class="chip chip-blue">' + esc(e.dept) + '</span></td><td><code style="font-size:0.9rem;font-weight:700;">' + e.pin + '</code></td></tr>';
+    }).join('') +
+    '</tbody></table></div></div>' : '');
+}
+
+function changePin() {
+  var curPin = document.getElementById('curPin').value;
+  var newPin = document.getElementById('newPin').value;
+  var confirmPin = document.getElementById('confirmPin').value;
+  var u = curUser();
+
+  if (curPin !== u.pin) { toast('Current PIN is incorrect.'); return; }
+  if (newPin.length !== 4 || !/^\d{4}$/.test(newPin)) { toast('New PIN must be exactly 4 digits.'); return; }
+  if (newPin !== confirmPin) { toast('New PINs do not match.'); return; }
+  if (newPin === curPin) { toast('New PIN must be different from current PIN.'); return; }
+
+  u.pin = newPin;
+  savePins();
+  toast('PIN updated successfully.');
+  document.getElementById('curPin').value = '';
+  document.getElementById('newPin').value = '';
+  document.getElementById('confirmPin').value = '';
+}
+
 // ─── INIT ─────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
-  render();
+  populateLoginSelect();
 });
 </script>
 </body>
